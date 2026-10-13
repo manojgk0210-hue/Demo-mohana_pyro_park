@@ -1,0 +1,58 @@
+
+name: Deploy Backend to EC2
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+
+jobs:
+  test-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: backend
+        run: npm ci
+
+      - name: Run tests
+        working-directory: backend
+        run: npm test --if-present
+
+      - name: Deploy backend to EC2
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            set -e
+            cd ~/mohana_pyro_park
+            git pull --ff-only origin main
+            cd backend
+            npm ci --omit=dev
+
+            if pm2 describe mohana-backend >/dev/null 2>&1; then
+              pm2 restart mohana-backend --update-env
+            else
+              pm2 start server.js --name mohana-backend
+            fi
+
+            pm2 save
+            sleep 3
+            curl --fail --silent --show-error \
+              http://localhost:5000/api/health
