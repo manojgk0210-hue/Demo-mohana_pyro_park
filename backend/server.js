@@ -85,7 +85,7 @@ app.get('/api/health', (req, res) => {
 app.get('/', (req, res) => {
   res.json({
     success: true,
-    message: 'GMohana Pyro Park backend is live',
+    message: 'OK ohana Pyro Park backend is live',
     healthCheck: '/api/health',
     apiBase: '/api'
   });
