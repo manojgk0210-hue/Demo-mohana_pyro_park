@@ -76,7 +76,7 @@ app.use('/api/translations', translationRoutes);
 app.get('/api/health', (req, res) => {
   res.json({ 
     success: true, 
-    message: 'GKM Mohana Pyro Park API is running',
+    message: 'ok Mohana Pyro Park API is running',
     timestamp: new Date().toISOString()
   });
 });
