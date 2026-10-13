@@ -1,5 +1,5 @@
 
-name: Deploy Backend to EC2
+name: Build and Deploy Backend
 
 on:
   push:
@@ -7,52 +7,85 @@ on:
       - main
     paths:
       - "backend/**"
-      - ".github/workflows/deploy-backend.yml"
+      - ".github/workflows/backend.yml"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: mohana-backend-deploy
+  cancel-in-progress: false
+
 jobs:
-  test-and-deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
         with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Install dependencies
-        working-directory: backend
-        run: npm ci
-
-      - name: Run tests
-        working-directory: backend
-        run: npm test --if-present
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/mohana-backend:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/mohana-backend:${{ github.sha }}
 
       - name: Deploy backend to EC2
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USER }}
+          username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN
           script: |
-            set -e
-            cd ~/mohana_pyro_park
-            git pull --ff-only origin main
-            cd backend
-            npm ci --omit=dev
+            set -eu
+            cd /home/ubuntu/mohana_pyro_park/backend
 
-            if pm2 describe mohana-backend >/dev/null 2>&1; then
-              pm2 restart mohana-backend --update-env
-            else
-              pm2 start server.js --name mohana-backend
+            test -f .env || {
+              echo "ERROR: Backend .env file is missing"
+              exit 1
+            }
+
+            echo "$DOCKERHUB_TOKEN" | docker login \
+              --username "$DOCKERHUB_USERNAME" \
+              --password-stdin
+
+            docker pull "$DOCKERHUB_USERNAME/mohana-backend:latest"
+
+            docker rm -f mohana-backend 2>/dev/null || true
+
+            docker run -d \
+              --name mohana-backend \
+              --restart unless-stopped \
+              --dns 8.8.8.8 \
+              --env-file /home/ubuntu/mohana_pyro_park/backend/.env \
+              -p 5000:5000 \
+              "$DOCKERHUB_USERNAME/mohana-backend:latest"
+
+            sleep 5
+            docker ps --filter name=mohana-backend
+            docker logs --tail 30 mohana-backend
+
+            if [ "$(docker inspect -f '{{.State.Running}}' mohana-backend)" != "true" ]; then
+              echo "ERROR: Backend container is not running"
+              exit 1
             fi
 
-            pm2 save
-            sleep 3
-            curl --fail --silent --show-error \
-              http://localhost:5000/api/health
+            docker logout
