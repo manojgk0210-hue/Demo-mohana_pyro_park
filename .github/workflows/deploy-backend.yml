@@ -41,7 +41,7 @@ jobs:
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             set -e
-            cd ~/Demo-mohana_pyro_park
+            cd ~/mohana_pyro_park
             git pull --ff-only origin main
             cd backend
             npm ci --omit=dev
